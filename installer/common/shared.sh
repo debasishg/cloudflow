@@ -57,7 +57,7 @@ echo "The tiller namespace is '$TILLER_NAMESPACE'"
 
 # Cloudflow operator version
 export operatorImageName="lightbend/cloudflow-operator"
-export operatorImageTag="0.6.0-test-release"
+export operatorImageTag="0.8.0-test-release"
 export operatorImage="$operatorImageName:$operatorImageTag"
 
 

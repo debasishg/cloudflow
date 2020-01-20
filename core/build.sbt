@@ -450,16 +450,6 @@ lazy val commonSettings = Seq(
   autoAPIMappings := true,
   useGpgAgent := false,
 
-  // bintrayOrganization := Some("lightbend"),
-  // bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
-  // bintrayOmitLicense := true,
-  // publishMavenStyle := false,
-  // resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
-  // resolvers ++= Seq(
-    // "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
-    // url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
-  // ),
-
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
     inquireVersions,

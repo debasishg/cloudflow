@@ -452,7 +452,7 @@ lazy val commonSettings = Seq(
 
   bintrayOrganization := Some("lightbend"),
   bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
-  // publishMavenStyle := false,
+  publishMavenStyle := false,
   bintrayOmitLicense := true,
   resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
   resolvers ++= Seq(

@@ -39,8 +39,8 @@ object InternalReleaseCommand {
         setReleaseVersion,
         tagReleaseWithChecks,
         publishArtifacts,
-        setNextVersion,
-        pushChanges
+        setNextVersion
+        // pushChanges
       )), state)
 
     releaseCommand.parser(updatedState)

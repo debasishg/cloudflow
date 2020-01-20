@@ -452,7 +452,7 @@ lazy val commonSettings = Seq(
 
   bintrayOrganization := Some("lightbend"),
   bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
-  publishMavenStyle := false,
+  // publishMavenStyle := false,
   bintrayOmitLicense := true,
   resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
   resolvers ++= Seq(
@@ -460,20 +460,20 @@ lazy val commonSettings = Seq(
     url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
   ),
 
-//   releaseProcess := Seq[ReleaseStep](
-//     checkSnapshotDependencies,
-//     inquireVersions,
-//     runClean,
-//     runTest,
-//     setReleaseVersion,
-//     commitReleaseVersion,
-//     tagRelease,
-//     releaseStepCommandAndRemaining("publishSigned"),
-//     releaseStepCommand("sonatypeBundleRelease"),
-//     setNextVersion,
-//     commitNextVersion,
-//     pushChanges
-//   ),
+  releaseProcess := Seq[ReleaseStep](
+    checkSnapshotDependencies,
+    inquireVersions,
+    runClean,
+    runTest,
+    setReleaseVersion,
+    commitReleaseVersion,
+    tagRelease,
+    releaseStepCommandAndRemaining("publishSigned"),
+    releaseStepCommand("sonatypeBundleRelease"),
+    setNextVersion,
+    commitNextVersion,
+    pushChanges
+  ),
 
   unidocGenjavadocVersion := "0.13",
 

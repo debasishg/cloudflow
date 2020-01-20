@@ -1,5 +1,7 @@
 import sbt._
+import sbt.Keys._
 
+import bintray.BintrayKeys._
 import sbtrelease.ReleasePlugin.autoImport.ReleaseKeys.releaseCommand
 import sbtrelease.ReleasePlugin.autoImport.{
   releaseProcess,
@@ -20,7 +22,17 @@ object InternalReleaseCommand {
 
     // tweak the keys used by sbt-release, for develop build
     val extracted = Project.extract(state)
+    val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
     val updatedState = extracted.appendWithSession(List(
+      bintrayOrganization := Some("lightbend"),
+      bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
+      bintrayOmitLicense := true,
+      publishMavenStyle := false,
+      resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
+      resolvers ++= Seq(
+        "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
+        url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
+      ),
       releaseVersion := {ver => RVersion(ver).map(_.copy(qualifier = Some(gitQualifier())).string).getOrElse(versionFormatError(ver))},
       releaseNextVersion := {ver => RVersion(ver).map(_.asSnapshot.string).getOrElse(versionFormatError(ver))},
       /* The logical steps which are executed are:

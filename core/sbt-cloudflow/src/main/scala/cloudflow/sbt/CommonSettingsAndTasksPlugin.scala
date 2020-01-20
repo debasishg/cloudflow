@@ -47,7 +47,7 @@ object CommonSettingsAndTasksPlugin extends AutoPlugin {
   /** Set default values for keys. */
   override def projectSettings = Seq(
     // Cloudflow is released with Ivy patterns
-    resolvers += Resolver.url("lightbend-oss", url(CloudflowBintrayReleasesRepoUrl))(Resolver.ivyStylePatterns),
+    resolvers += Resolver.url("cloudflow", url(CloudflowBintrayReleasesRepoUrl))(Resolver.ivyStylePatterns),
     // TODO: currently required for our custom build of Akka. Remove when our features have been merged.
     resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
 

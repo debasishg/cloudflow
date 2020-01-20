@@ -460,20 +460,20 @@ lazy val commonSettings = Seq(
     url("https://repo.lightbend.com/commercial-releases/"))(Resolver.ivyStylePatterns)
   ),
 
-  releaseProcess := Seq[ReleaseStep](
-    checkSnapshotDependencies,
-    inquireVersions,
-    runClean,
-    runTest,
-    setReleaseVersion,
-    commitReleaseVersion,
-    tagRelease,
-    releaseStepCommandAndRemaining("publishSigned"),
-    releaseStepCommand("sonatypeBundleRelease"),
-    setNextVersion,
-    commitNextVersion,
-    pushChanges
-  ),
+//   releaseProcess := Seq[ReleaseStep](
+//     checkSnapshotDependencies,
+//     inquireVersions,
+//     runClean,
+//     runTest,
+//     setReleaseVersion,
+//     commitReleaseVersion,
+//     tagRelease,
+//     releaseStepCommandAndRemaining("publishSigned"),
+//     releaseStepCommand("sonatypeBundleRelease"),
+//     setNextVersion,
+//     commitNextVersion,
+//     pushChanges
+//   ),
 
   unidocGenjavadocVersion := "0.13",
 

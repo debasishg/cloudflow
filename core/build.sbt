@@ -451,13 +451,13 @@ lazy val commonSettings = Seq(
   useGpgAgent := false,
 
   bintrayOrganization := Some("lightbend"),
-  bintrayRepository := altBintrayRepository.value.getOrElse("commercial-releases"),
+  bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
   publishMavenStyle := false,
   bintrayOmitLicense := true,
   resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
   resolvers ++= Seq(
-    "com-mvn" at "https://repo.lightbend.com/commercial-releases/" , Resolver.url("com-ivy",
-    url("https://repo.lightbend.com/commercial-releases/"))(Resolver.ivyStylePatterns)
+    "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
+    url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
   ),
 
 //   releaseProcess := Seq[ReleaseStep](

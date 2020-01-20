@@ -498,6 +498,8 @@ lazy val commonSettings = Seq(
 val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
 ThisBuild / altBintrayRepository := None
 
+releaseIgnoreUntrackedFiles := true
+
 lazy val formattingSettings = Seq(
   scalariformPreferences := scalariformPreferences.value
     .setPreference(AlignParameters, false)

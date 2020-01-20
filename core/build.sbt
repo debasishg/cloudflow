@@ -450,6 +450,16 @@ lazy val commonSettings = Seq(
   autoAPIMappings := true,
   useGpgAgent := false,
 
+  bintrayOrganization := Some("lightbend"),
+  bintrayRepository := altBintrayRepository.value.getOrElse("commercial-releases"),
+  publishMavenStyle := false,
+  bintrayOmitLicense := true,
+  resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
+  resolvers ++= Seq(
+    "com-mvn" at "https://repo.lightbend.com/commercial-releases/" , Resolver.url("com-ivy",
+    url("https://repo.lightbend.com/commercial-releases/"))(Resolver.ivyStylePatterns)
+  ),
+
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
     inquireVersions,
@@ -484,6 +494,9 @@ lazy val commonSettings = Seq(
   scalacOptions in (Compile, console) := (scalacOptions in (Global)).value.filter(_ == "-Ywarn-unused-import"),
   scalacOptions in (Test, console) := (scalacOptions in (Compile, console)).value,
 )
+
+val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
+ThisBuild / altBintrayRepository := None
 
 lazy val formattingSettings = Seq(
   scalariformPreferences := scalariformPreferences.value

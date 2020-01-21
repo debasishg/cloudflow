@@ -1,6 +1,9 @@
 import sbt._
 import sbt.Keys._
 
+// import bintray.BintrayPlugin
+// import bintray.BintrayPlugin.autoImport._
+
 import scalariform.formatter.preferences._
 import Library._
 
@@ -443,22 +446,36 @@ def cloudflowModule(moduleID: String): Project = {
     .enablePlugins(AutomateHeaderPlugin)
 }
 
-lazy val commonSettings = Seq(
+lazy val bintraySettings =
+  if (BintrayPlugin.isEnabledViaProp) {
+    Seq(bintrayOrganization := Some("lightbend"),
+      bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
+      bintrayOmitLicense := true,
+      publishMavenStyle := false,
+      resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
+      resolvers ++= Seq(
+        "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
+        url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
+      )
+    )
+  } else Seq.empty
+
+lazy val commonSettings = bintraySettings ++ Seq(
   organization := "com.lightbend.cloudflow",
   headerLicense := Some(HeaderLicense.ALv2("(C) 2016-2020", "Lightbend Inc. <https://www.lightbend.com>")),
   scalaVersion := Version.Scala,
   autoAPIMappings := true,
   useGpgAgent := false,
 
-  bintrayOrganization := Some("lightbend"),
-  bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
-  bintrayOmitLicense := true,
-  publishMavenStyle := false,
-  resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
-  resolvers ++= Seq(
-    "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
-    url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
-  ),
+//   bintrayOrganization := Some("lightbend"),
+//   bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
+//   bintrayOmitLicense := true,
+//   publishMavenStyle := false,
+//   resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
+//   resolvers ++= Seq(
+//     "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
+//     url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
+//   ),
 
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,

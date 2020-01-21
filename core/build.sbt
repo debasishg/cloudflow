@@ -450,20 +450,20 @@ lazy val commonSettings = Seq(
   autoAPIMappings := true,
   useGpgAgent := false,
 
-//   releaseProcess := Seq[ReleaseStep](
-//     checkSnapshotDependencies,
-//     inquireVersions,
-//     runClean,
-//     runTest,
-//     setReleaseVersion,
-//     commitReleaseVersion,
-//     tagRelease,
-//     releaseStepCommandAndRemaining("publishSigned"),
-//     releaseStepCommand("sonatypeBundleRelease"),
-//     setNextVersion,
-//     commitNextVersion,
-//     pushChanges
-//   ),
+  releaseProcess := Seq[ReleaseStep](
+    checkSnapshotDependencies,
+    inquireVersions,
+    runClean,
+    runTest,
+    setReleaseVersion,
+    commitReleaseVersion,
+    tagRelease,
+    releaseStepCommandAndRemaining("publishSigned"),
+    releaseStepCommand("sonatypeBundleRelease"),
+    setNextVersion,
+    commitNextVersion,
+    pushChanges
+  ),
 
   unidocGenjavadocVersion := "0.13",
 

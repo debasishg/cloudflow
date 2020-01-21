@@ -22,12 +22,11 @@ object InternalReleaseCommand {
 
     // tweak the keys used by sbt-release, for develop build
     val extracted = Project.extract(state)
-    // val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
+    val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
     val updatedState = extracted.appendWithSession(List(
       bintrayOrganization := Some("lightbend"),
-      // ThisBuild / altBintrayRepository := None,
-      // bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
-      bintrayRepository := "cloudflow",
+      ThisBuild / altBintrayRepository := None,
+      bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
       bintrayOmitLicense := true,
       publishMavenStyle := false,
       resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",

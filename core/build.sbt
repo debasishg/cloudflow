@@ -450,6 +450,16 @@ lazy val commonSettings = Seq(
   autoAPIMappings := true,
   useGpgAgent := false,
 
+  bintrayOrganization := Some("lightbend"),
+  bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
+  bintrayOmitLicense := true,
+  publishMavenStyle := false,
+  resolvers += "Akka Snapshots" at "https://repo.akka.io/snapshots/",
+  resolvers ++= Seq(
+    "com-mvn" at "https://repo.lightbend.com/cloudflow" , Resolver.url("com-ivy",
+    url("https://repo.lightbend.com/cloudflow"))(Resolver.ivyStylePatterns)
+  ),
+
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
     inquireVersions,
@@ -485,8 +495,8 @@ lazy val commonSettings = Seq(
   scalacOptions in (Test, console) := (scalacOptions in (Compile, console)).value,
 )
 
-// val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
-// ThisBuild / altBintrayRepository := None
+val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
+ThisBuild / altBintrayRepository := None
 
 releaseIgnoreUntrackedFiles := true
 

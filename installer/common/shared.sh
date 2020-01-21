@@ -37,7 +37,7 @@ set +x
 
 # Cloudflow operator version
 export operatorImageName="lightbend/cloudflow-operator"
-export operatorImageTag="0.0.3-test-release"
+export operatorImageTag="0.0.0.1-release"
 export operatorImage="$operatorImageName:$operatorImageTag"
 
 

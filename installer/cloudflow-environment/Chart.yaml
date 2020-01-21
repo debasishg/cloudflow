@@ -15,4 +15,4 @@
 apiVersion: v1
 description: A Helm chart for deploying a Cloudflow environment
 name: cloudflow-environment
-version: 0.0.3-test-release
+version: 0.0.0.1-release

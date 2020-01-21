@@ -25,6 +25,7 @@ object InternalReleaseCommand {
     val altBintrayRepository = settingKey[Option[String]]("Overrides the default bintray repository if defined")
     val updatedState = extracted.appendWithSession(List(
       bintrayOrganization := Some("lightbend"),
+      ThisBuild / altBintrayRepository := None,
       bintrayRepository := altBintrayRepository.value.getOrElse("cloudflow"),
       bintrayOmitLicense := true,
       publishMavenStyle := false,

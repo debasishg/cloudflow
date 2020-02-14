@@ -19,7 +19,7 @@ lazy val root =
 
 //tag::docs-CloudflowApplicationPlugin-example[]
 lazy val callRecordPipeline = appModule("call-record-pipeline")
-  .enablePlugins(CloudflowApplicationPlugin)
+  // .enablePlugins(CloudflowApplicationPlugin)
   .settings(commonSettings)
   .settings(
     name := "call-record-aggregator"
@@ -31,7 +31,7 @@ lazy val datamodel = appModule("datamodel")
   .enablePlugins(CloudflowLibraryPlugin)
 
 lazy val akkaCdrIngestor= appModule("akka-cdr-ingestor")
-    .enablePlugins(CloudflowAkkaStreamsLibraryPlugin)
+    .enablePlugins(CloudflowAkkaPlugin)
     .settings(
       commonSettings,
       libraryDependencies ++= Seq(
@@ -43,7 +43,7 @@ lazy val akkaCdrIngestor= appModule("akka-cdr-ingestor")
   .dependsOn(datamodel)
 
 lazy val akkaJavaAggregationOutput= appModule("akka-java-aggregation-output")
-  .enablePlugins(CloudflowAkkaStreamsLibraryPlugin)
+  .enablePlugins(CloudflowAkkaPlugin)
   .settings(
     commonSettings,
     libraryDependencies ++= Seq(
@@ -55,7 +55,7 @@ lazy val akkaJavaAggregationOutput= appModule("akka-java-aggregation-output")
   .dependsOn(datamodel)
 
 lazy val sparkAggregation = appModule("spark-aggregation")
-    .enablePlugins(CloudflowSparkLibraryPlugin)
+    .enablePlugins(CloudflowSparkPlugin)
     .settings(
       commonSettings,
       Test / parallelExecution := false,

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/go-akka/configuration"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/deploy"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/docker"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/domain"
@@ -28,11 +29,13 @@ import (
 )
 
 type deployOptions struct {
-	cmd           *cobra.Command
-	username      string
-	password      string
-	passwordStdin bool
-	volumeMounts  []string
+	cmd               *cobra.Command
+	blueprintFilePath string
+	imagePath         string
+	username          string
+	password          string
+	passwordStdin     bool
+	volumeMounts      []string
 }
 
 func init() {
@@ -42,7 +45,7 @@ func init() {
 		Use:   "deploy",
 		Short: "Deploys a Cloudflow application to the cluster.",
 		Long: `Deploys a Cloudflow application to the cluster.
-The arguments to the command consists of a docker image path and optionally one
+The arguments to the command consists of either a blueprint file path or docker image path and optionally one
 or more '[streamlet-name].[configuration-parameter]=[value]' pairs, separated by
 a space.
 
@@ -53,7 +56,8 @@ is the name of a Kubernetes Persistent Volume Claim, which needs to be located
 in the same namespace as the Cloudflow application, e.g. the namespace with the
 same name as the application.
 
-  kubectl cloudflow deploy docker.registry.com/my-company/sensor-data-scala:292-c183d80 --volume-mount my-streamlet.mount=pvc-name
+  kubectl cloudflow deploy --image docker.registry.com/my-company/sensor-data-scala:292-c183d80 --volume-mount my-streamlet.mount=pvc-name
+  kubectl cloudflow deploy --blueprint HEAD:examples/call-record-aggregator/call-record-pipeline/src/main/blueprint/blueprint.conf --volume-mount my-streamlet.mount=pvc-name
 
 It is also possible to specify more than one "volume-mount" parameter.
 
@@ -81,10 +85,21 @@ the stored credentials.
 
 You can update the credentials with the "update-docker-credentials" command.
 `,
-		Example: `kubectl cloudflow deploy registry.test-cluster.io/cloudflow/sensor-data-scala:292-c183d80 valid-logger.log-level=info valid-logger.msg-prefix=valid`,
-		Args:    validateDeployCmdArgs,
-		Run:     deployOpts.deployImpl,
+		Example: `kubectl cloudflow deploy -i registry.test-cluster.io/cloudflow/sensor-data-scala:292-c183d80 valid-logger.log-level=info valid-logger.msg-prefix=valid`,
+		PreRun: func(cmd *cobra.Command, args []string) {
+			if cmd.Flag("image").Changed == false && cmd.Flag("blueprint").Changed == false {
+				util.LogAndExit("Please specify either the blueprint file or the image path")
+			}
+			if cmd.Flag("image").Changed == true {
+				fmt.Printf("Deploying image %s\n", cmd.Flag("image").Value.String())
+			} else if cmd.Flag("blueprint").Changed == true {
+				fmt.Printf("Deploying blueprint %s\n", cmd.Flag("blueprint").Value.String())
+			}
+		},
+		Run: deployOpts.deployImpl,
 	}
+	deployOpts.cmd.Flags().StringVarP(&deployOpts.blueprintFilePath, "blueprint", "b", "", "blueprint file path.")
+	deployOpts.cmd.Flags().StringVarP(&deployOpts.imagePath, "image", "i", "", "docker image path.")
 	deployOpts.cmd.Flags().StringVarP(&deployOpts.username, "username", "u", "", "docker registry username.")
 	deployOpts.cmd.Flags().StringVarP(&deployOpts.password, "password", "p", "", "docker registry password.")
 	deployOpts.cmd.Flags().BoolVarP(&deployOpts.passwordStdin, "password-stdin", "", false, "Take the password from stdin")
@@ -96,15 +111,129 @@ You can update the credentials with the "update-docker-credentials" command.
 func (opts *deployOptions) deployImpl(cmd *cobra.Command, args []string) {
 	version.FailOnProtocolVersionMismatch()
 
-	imageRef := args[0]
+	if cmd.Flag("image").Changed == true {
+		deployImage(cmd, opts, args)
+	} else {
+		deployBlueprint(cmd, opts, args)
+	}
+}
+
+func deployBlueprint(cmd *cobra.Command, opts *deployOptions, args []string) {
+	// read blueprint file and load its content
+	blueprintFile := cmd.Flag("blueprint").Value.String()
+	content, err := ioutil.ReadFile(blueprintFile)
+	if err != nil {
+		util.LogAndExit("%s", err.Error())
+	}
+	config, err := loadBlueprintConfigContent(string(content[:]))
+	if err != nil {
+		util.LogAndExit("%s", err.Error())
+	}
+	fmt.Printf("%s\n", config)
+
+	// get the images from the blueprint
+	images := config.GetNode("blueprint.images").GetObject().Items()
+
+	var imageRefs []deploy.ImageReference
+	var dockerRegistryURL string
+	// var dockerRepository string
+
+	for _, imageRef := range images {
+		ref, err := parseImageReference(imageRef.GetString())
+		if err != nil {
+			util.LogAndExit("%s", err.Error())
+		}
+		imageRefs = append(imageRefs, *ref)
+		dockerRegistryURL = ref.Registry
+		// dockerRepository = ref.Repository
+	}
+
+	applicationSpec, pulledImages := deploy.GetCloudflowApplicationSpecFromDockerImages(imageRefs, config)
+	// fmt.Println(applicationSpec)
+	jsonb, err := json.Marshal(applicationSpec)
+	fmt.Println(string(jsonb))
+
+	namespace := applicationSpec.AppID
+	k8sClient, k8sErr := k8s.GetClient()
+	if k8sErr != nil {
+		util.LogAndExit("Failed to create new kubernetes client for Cloudflow application `%s`, %s", namespace, k8sErr.Error())
+	}
+
+	cloudflowApplicationClient, err := k8s.GetCloudflowApplicationClient(namespace)
+	if err != nil {
+		util.LogAndExit("Failed to create new client for Cloudflow application `%s`, %s", namespace, err.Error())
+	}
+
+	// Extract volume mounts and update the application spec with the name of the PVC's
+	applicationSpec, err = deploy.ValidateVolumeMounts(k8sClient, applicationSpec, opts.volumeMounts)
+	if err != nil {
+		util.LogErrorAndExit(err)
+	}
+
+	configurationParameters := deploy.SplitConfigurationParameters(args[0:])
+	configurationParameters = deploy.AppendExistingValuesNotConfigured(k8sClient, applicationSpec, configurationParameters)
+	configurationParameters = deploy.AppendDefaultValuesForMissingConfigurationValues(applicationSpec, configurationParameters)
+	configurationKeyValues, validationError := deploy.ValidateConfigurationAgainstDescriptor(applicationSpec, configurationParameters)
+
+	if validationError != nil {
+		util.LogAndExit("%s", validationError.Error())
+	}
+	createNamespaceIfNotExist(k8sClient, applicationSpec)
+
+	for _, pulledImage := range pulledImages {
+		if pulledImage.Authenticated {
+			if err := verifyPasswordOptions(opts); err == nil {
+				if terminal.IsTerminal(int(os.Stdin.Fd())) && (opts.username == "" || opts.password == "") {
+					if !dockerConfigEntryExists(k8sClient, namespace, dockerRegistryURL) {
+						username, password := promptCredentials(dockerRegistryURL)
+						createOrUpdateImagePullSecret(k8sClient, namespace, dockerRegistryURL, username, password)
+					}
+				} else if opts.username != "" && opts.password != "" {
+					createOrUpdateImagePullSecret(k8sClient, namespace, dockerRegistryURL, opts.username, opts.password)
+				} else {
+					util.LogAndExit("Please provide username and password, by using both --username and --password-stdin, or, by using both --username and --password, or omit these flags to get prompted for username and password.")
+				}
+			} else {
+				util.LogAndExit("%s", err)
+			}
+		}
+	}
+
+	serviceAccount := newCloudflowServiceAccountWithImagePullSecrets(namespace)
+
+	if _, err := createOrUpdateServiceAccount(k8sClient, namespace, serviceAccount); err != nil {
+		util.LogAndExit("%s", err)
+	}
+
+	streamletNameSecretMap := deploy.CreateSecretsData(&applicationSpec, configurationKeyValues)
+	createStreamletSecrets(k8sClient, namespace, streamletNameSecretMap)
+
+	applicationSpec, err = copyReplicaConfigurationFromCurrentApplication(cloudflowApplicationClient, applicationSpec)
+	if err != nil {
+		util.LogAndExit("The application descriptor is invalid, %s", err.Error())
+	}
+	createOrUpdateCloudflowApplication(cloudflowApplicationClient, applicationSpec)
+
+	util.PrintSuccess("Deployment of application `%s` has started.\n", namespace)
+}
+
+func loadBlueprintConfigContent(contents string) (*configuration.Config, error) {
+	config := configuration.ParseString(contents)
+	fmt.Printf("%s\n", config.Root().GetString())
+	return config, nil
+}
+
+func deployImage(cmd *cobra.Command, opts *deployOptions, args []string) {
+	imageRef := cmd.Flag("image").Value.String()
+	fmt.Printf("Image Ref: %s\n", imageRef)
 	imageReference, err := parseImageReference(imageRef)
 
 	if err != nil {
 		util.LogAndExit("%s", err.Error())
 	}
 
-	dockerRegistryURL := imageReference.registry
-	dockerRepository := imageReference.repository
+	dockerRegistryURL := imageReference.Registry
+	dockerRepository := imageReference.Repository
 	applicationSpec, pulledImage := deploy.GetCloudflowApplicationDescriptorFromDockerImage(dockerRegistryURL, dockerRepository, imageRef)
 
 	namespace := applicationSpec.AppID
@@ -125,7 +254,7 @@ func (opts *deployOptions) deployImpl(cmd *cobra.Command, args []string) {
 		util.LogErrorAndExit(err)
 	}
 
-	configurationParameters := deploy.SplitConfigurationParameters(args[1:])
+	configurationParameters := deploy.SplitConfigurationParameters(args[0:])
 	configurationParameters = deploy.AppendExistingValuesNotConfigured(k8sClient, applicationSpec, configurationParameters)
 	configurationParameters = deploy.AppendDefaultValuesForMissingConfigurationValues(applicationSpec, configurationParameters)
 	configurationKeyValues, validationError := deploy.ValidateConfigurationAgainstDescriptor(applicationSpec, configurationParameters)
@@ -196,14 +325,16 @@ func verifyPasswordOptions(opts *deployOptions) error {
 	return nil
 }
 
+/*
 type imageReference struct {
 	registry   string
 	repository string
 	image      string
 	tag        string
 }
+*/
 
-func parseImageReference(imageURI string) (*imageReference, error) {
+func parseImageReference(imageURI string) (*deploy.ImageReference, error) {
 
 	imageRef := strings.TrimSpace(imageURI)
 	msg := "The following docker image path is not valid:\n\n%s\n\nA common error is to prefix the image path with a URI scheme like 'http' or 'https'."
@@ -235,29 +366,36 @@ func parseImageReference(imageURI string) (*imageReference, error) {
 			result[name] = match[i]
 		}
 	}
+	result["uri"] = imageURI
 
-	ir := imageReference{result["reg"], strings.TrimSuffix(result["repo"], "/"), result["image"], result["tag"]}
+	ir := deploy.ImageReference{
+		Registry:   result["reg"],
+		Repository: strings.TrimSuffix(result["repo"], "/"),
+		Image:      result["image"],
+		Tag:        result["tag"],
+		FullURI:    result["uri"],
+	}
 
-	if ir.image == "" {
+	if ir.Image == "" {
 		return nil, fmt.Errorf(msg, imageRef)
 	}
 
-	if strings.HasPrefix(ir.image, ":") || strings.HasSuffix(ir.image, ":") {
+	if strings.HasPrefix(ir.Image, ":") || strings.HasSuffix(ir.Image, ":") {
 		return nil, fmt.Errorf(msg, imageRef)
 	}
 
-	if strings.HasPrefix(ir.tag, ".") || strings.HasPrefix(ir.tag, "-") || strings.HasPrefix(ir.tag, ":") || strings.HasSuffix(ir.tag, ":") {
+	if strings.HasPrefix(ir.Tag, ".") || strings.HasPrefix(ir.Tag, "-") || strings.HasPrefix(ir.Tag, ":") || strings.HasSuffix(ir.Tag, ":") {
 		return nil, fmt.Errorf(msg, imageRef)
 	}
 
-	if strings.Count(ir.tag, ":") > 1 {
+	if strings.Count(ir.Tag, ":") > 1 {
 		return nil, fmt.Errorf(msg, imageRef)
 	}
 
 	// this is a shortcoming in using a regex for this, since it will always eagerly match the first part as the registry.
-	if ir.registry != "" && ir.repository == "" {
-		ir.repository = ir.registry
-		ir.registry = ""
+	if ir.Registry != "" && ir.Repository == "" {
+		ir.Repository = ir.Registry
+		ir.Registry = ""
 	}
 
 	return &ir, nil
@@ -358,13 +496,4 @@ func createOrUpdateCloudflowApplication(cloudflowApplicationClient *k8s.Cloudflo
 		}
 		util.LogAndExit("Failed to determine if Cloudflow application already have been created, %s", errCR.Error())
 	}
-}
-
-func validateDeployCmdArgs(cmd *cobra.Command, args []string) error {
-
-	if len(args) < 1 || args[0] == "" {
-		return fmt.Errorf("Please specify the full path to the Docker image containing the application. For example: 'docker-registry.mydomain.com/cloudflow/awesome-app:37-172e856'")
-	}
-
-	return nil
 }

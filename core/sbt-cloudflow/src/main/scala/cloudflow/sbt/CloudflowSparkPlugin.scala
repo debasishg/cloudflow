@@ -33,6 +33,7 @@ object CloudflowSparkPlugin extends AutoPlugin {
   final val CloudflowSparkDockerBaseImage =
     s"lightbend/spark:$CloudflowVersion-cloudflow-spark-$SparkVersion-scala-${CloudflowBasePlugin.ScalaVersion}"
 
+
   override def requires = CloudflowBasePlugin
 
   override def projectSettings = Seq(

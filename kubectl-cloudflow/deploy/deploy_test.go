@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-akka/configuration"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/domain"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,6 +27,41 @@ func commandLineForConfiguration() []string {
 		`valid-logger.msg-prefix-5=true`,
 		`valid-logger.msg-prefix-6="20 minutes"`,
 		`valid-logger.msg-prefix-7="20M"`}
+}
+
+/*
+type configRoot struct {
+	Cloudflow internal     `json:"cloudflow"`
+}
+type internal struct {
+	Internal server        `json:"internal"`
+}
+type server struct {
+	Server containerPort   `json:"server"`
+}
+type containerPort struct {
+	ContainerPort int      `json:"container-port"`
+}
+*/
+
+func TestRawJson(t *testing.T) {
+	config := configuration.ParseString(fmt.Sprintf("{\"%s\" = %d}", "cloudflow.internal.server.container-port", 3002))
+	t.Log(config)
+	c := containerPort {ContainerPort: 3002}
+	s := server {Server: c}
+	i := internal {Internal: s}
+	r := configRoot {Cloudflow: i}
+
+	bytes, _ := json.Marshal(r)
+	t.Log(string(bytes))
+	// bytes, _ := json.Marshal(configuration.FromObject(r))
+	// t.Log(bytes)
+	// assert.NotEmpty(t, err)
+
+	// var result configuration.Config
+	// _ = json.Unmarshal(bytes, &result)
+	// assert.NotEmpty(t, err)
+	// t.Log(result)
 }
 
 func Test_SplitConfigurationParameters(t *testing.T) {

@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/go-akka/configuration"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/docker"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/domain"
 	"github.com/lightbend/cloudflow/kubectl-cloudflow/util"
@@ -90,6 +93,345 @@ func GetCloudflowApplicationDescriptorFromDockerImage(dockerRegistryURL string, 
 		spec.Deployments[i].Image = imageRef
 	}
 	return spec, *pulledImage
+}
+
+// GetCloudflowApplicationSpecFromDockerImages pulls a image and extracts the Cloudflow Application descriptor from a docker label
+func GetCloudflowApplicationSpecFromDockerImages(imageRefs []ImageReference,
+	blueprintConfig *configuration.Config) (domain.CloudflowApplicationSpec, []*docker.PulledImage) {
+
+	apiversion, apierr := exec.Command("docker", "version", "--format", "'{{.Server.APIVersion}}'").Output()
+	if apierr != nil {
+		util.LogAndExit("Could not get docker API version, is the docker daemon running? API error: %s", apierr.Error())
+	}
+
+	trimmedapiversion := strings.Trim(string(apiversion), "\t \n\r'")
+	client, error := docker.GetClient(trimmedapiversion)
+	if error != nil {
+		client, error = docker.GetClient("1.39")
+		if error != nil {
+			fmt.Printf("No compatible version of the Docker server API found, tried version %s and 1.39", trimmedapiversion)
+			panic(error)
+		}
+	}
+
+	// get all streamlet descriptors, image digests and pulled images in arrays
+	var streamletDescriptors []domain.Descriptor
+	var imageDigests []string
+	var apiVersion string
+	var pulledImages []*docker.PulledImage
+	var deployImages = make(map[string]string)
+	for _, imageRef := range imageRefs {
+		streamletsDescriptorsDigestPair, version := docker.GetCloudflowStreamletDescriptorsForImage(client, imageRef.FullURI)
+		if version != domain.SupportedApplicationDescriptorVersion {
+			util.LogAndExit("Image %s is incompatible and no longer supported. Please update sbt-cloudflow and rebuild the image.", imageRef.FullURI)
+		}
+		streamletDescriptors = append(streamletsDescriptorsDigestPair.StreamletDescriptors, streamletDescriptors...)
+		imageDigests = append(imageDigests, streamletsDescriptorsDigestPair.ImageDigest)
+		apiVersion = version
+
+		pulledImage, pullError := docker.PullImage(client, imageRef.FullURI)
+		if pullError != nil {
+			util.LogAndExit("Failed to pull image %s: %s", imageRef.FullURI, pullError.Error())
+		}
+		pulledImages = append(pulledImages, pulledImage)
+
+		// this format has to be used in Deployment: full-uri@sha
+		deployImage := fmt.Sprintf("%s@%s", strings.Split(pulledImage.ImageName, ":")[0], strings.Split(streamletsDescriptorsDigestPair.ImageDigest, "@")[1])
+		deployImages[imageRef.FullURI] = deployImage
+	}
+
+	// load the blueprint
+	bp := makeBlueprint(blueprintConfig, imageDigests)
+	fmt.Println(bp)
+
+	// Spec.Streamlets & Spec.Deployments
+	var streamlets []domain.Streamlet
+	var deployments []domain.Deployment
+	var index = 0
+	for _, streamletDescriptor := range streamletDescriptors {
+		streamletIDs := bp.getStreamletIDsFromClassName(streamletDescriptor.ClassName)
+		if len(streamletIDs) == 0 {
+			continue
+		}
+
+		for _, streamletID := range streamletIDs {
+			streamlet := domain.Streamlet{Descriptor: streamletDescriptor, Name: streamletID}
+			streamlets = append(streamlets, streamlet)
+			deployments = append(deployments, makeDeployment(bp, streamletID, streamlet, deployImages, index))
+			index++
+		}
+	}
+
+	// Spec.Connections
+	var conns []domain.Connection
+	for inlet, outlets := range bp.connections {
+		for _, outlet := range outlets {
+			// need to switch inlet and outlet as we have them reversed in the blueprint map of connections
+			conns = append(conns,
+				domain.Connection{InletName: outlet.port,
+					InletStreamletName: outlet.streamletID, OutletName: inlet.port, OutletStreamletName: inlet.streamletID})
+		}
+	}
+
+	var spec domain.CloudflowApplicationSpec
+	spec.AgentPaths = map[string]string{
+		"prometheus": "/prometheus/jmx_prometheus_javaagent-0.11.0.jar",
+	}
+	spec.AppID = bp.name
+	spec.AppVersion = "1.3.1-SNAPSHOT"
+	spec.Version = apiVersion
+	spec.LibraryVersion = domain.LibraryVersion
+	spec.Connections = conns
+	spec.Streamlets = streamlets
+	spec.Deployments = deployments
+	return spec, pulledImages
+}
+
+func makeDeployment(bp blueprint, streamletID string, streamlet domain.Streamlet, deployImages map[string]string, index int) domain.Deployment {
+	var deployment domain.Deployment
+	deployment.StreamletName = streamletID
+	deployment.ClassName = streamlet.Descriptor.ClassName
+	image, err := bp.getImageFromStreamletID(streamletID)
+	if err != nil {
+		util.LogAndExit(err.Error())
+	}
+	deployment.Image = deployImages[image]
+	deployment.PortMappings = getAllPortMappings(bp.name, streamletID, streamlet.Descriptor, bp)
+	deployment.VolumeMounts = streamlet.Descriptor.VolumeMounts
+	deployment.Runtime = streamlet.Descriptor.Runtime
+	deployment.SecretName = transformToDNS1123SubDomain(streamlet.Name)
+	deployment.Name = fmt.Sprintf("%s.%s", bp.name, streamletID)
+	deployment.Replicas = 1
+
+	config, endpoint, err := getServerConfigAndEndpoint(bp.name, streamlet, index)
+	if err != nil {
+		util.LogAndExit(err.Error())
+	}
+	if config != nil {
+		deployment.Config = config
+	}
+	if endpoint != (domain.Endpoint{}) {
+		deployment.Endpoint = &endpoint
+	}
+	return deployment
+}
+
+// type Deployment struct {
+// 	ClassName     string                  `json:"class_name"`
+// 	Config        json.RawMessage         `json:"config"`
+// 	Image         string                  `json:"image"`
+// 	Name          string                  `json:"name"`
+// 	PortMappings  map[string]PortMapping  `json:"port_mappings"`
+// 	VolumeMounts  []VolumeMountDescriptor `json:"volume_mounts"`
+// 	Runtime       string                  `json:"runtime"`
+// 	StreamletName string                  `json:"streamlet_name"`
+// 	SecretName    string                  `json:"secret_name"`
+// 	Endpoint      *Endpoint               `json:"endpoint,omitempty"`
+// 	Replicas      int                     `json:"replicas,omitempty"`
+// }
+
+// Removes from the leading and trailing positions the specified characters.
+func trim(name string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(name, "."), "-"), "."), "-")
+}
+
+// Make a name compatible with DNS 1123 Subdomain
+// Limit the resulting name to 253 characters
+func transformToDNS1123SubDomain(name string) string {
+	splits := strings.Split(name, ".")
+	var normalized []string
+	for _, split := range splits {
+		normalized = append(normalized, trim(normalize(split)))
+	}
+	joined := strings.Join(normalized[:], ".")
+	if len(joined) > subDomainMaxLength {
+		return strings.TrimSuffix(joined[0:subDomainMaxLength], ".")
+	}
+	return strings.TrimSuffix(joined, ".")
+}
+
+func normalize(name string) string {
+	t := transform.Chain(norm.NFKD)
+	normalizedName, _, _ := transform.String(t, name)
+	s := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(normalizedName), "_", "-"), ".", "-")
+	var re = regexp.MustCompile(`[^-a-z0-9]`)
+	return re.ReplaceAllString(s, "")
+}
+
+func getServerAttribute(descriptor domain.Descriptor) domain.Attribute {
+	var attr domain.Attribute
+	for _, attribute := range descriptor.Attributes {
+		if attribute.AttributeName == "server" {
+			attr = attribute
+			return attribute
+		}
+	}
+	return attr
+}
+
+// MinimumEndpointContainerPort indicates the minimum value of the end point port
+const minimumEndpointContainerPort = 3000
+const subDomainMaxLength = 253
+
+type configRoot struct {
+	Cloudflow internal `json:"cloudflow,omitempty"`
+}
+type internal struct {
+	Internal server `json:"internal,omitempty"`
+}
+type server struct {
+	Server containerPort `json:"server,omitempty"`
+}
+type containerPort struct {
+	ContainerPort int `json:"container-port,omitempty"`
+}
+
+func getServerConfigAndEndpoint(appID string, streamlet domain.Streamlet, index int) (json.RawMessage, domain.Endpoint, error) {
+	var endPoint domain.Endpoint
+	containerPrt := minimumEndpointContainerPort + index
+	attribute := getServerAttribute(streamlet.Descriptor)
+	if attribute == (domain.Attribute{}) {
+		x, _ := json.Marshal(containerPort{})
+		return x, domain.Endpoint{}, nil
+	}
+	endPoint = domain.Endpoint{AppID: appID, Streamlet: streamlet.Name, ContainerPort: containerPrt}
+	c := containerPort{ContainerPort: containerPrt}
+	s := server{Server: c}
+	i := internal{Internal: s}
+	r := configRoot{Cloudflow: i}
+	bytes, _ := json.Marshal(r)
+	return bytes, endPoint, nil
+}
+
+func getServerConfigAndEndpoint1(appID string, streamlet domain.Streamlet, index int) (json.RawMessage, domain.Endpoint, error) {
+	var endPoint domain.Endpoint
+	containerPort := minimumEndpointContainerPort + index
+	attribute := getServerAttribute(streamlet.Descriptor)
+	if attribute == (domain.Attribute{}) {
+		j, err := json.Marshal(configuration.Config{})
+		if err != nil {
+			util.LogAndExit(err.Error())
+		}
+		return json.RawMessage(j), domain.Endpoint{}, nil
+	}
+	endPoint = domain.Endpoint{AppID: appID, Streamlet: streamlet.Name, ContainerPort: containerPort}
+	// j, err := json.Marshal(configuration.ParseString(fmt.Sprintf("{%s = %d}", attribute.ConfigPath, containerPort)))
+	j, err := json.Marshal(configuration.ParseString(fmt.Sprintf(`{%s = %d}`, attribute.ConfigPath, containerPort)))
+	if err != nil {
+		util.LogAndExit(err.Error())
+	}
+	config := json.RawMessage(j)
+	return config, endPoint, nil
+}
+
+func makeBlueprint(blueprintConfig *configuration.Config, imageDigests []string) blueprint {
+	// get name
+	name := blueprintConfig.GetString("blueprint.name", strings.Split(imageDigests[0], "@")[0])
+
+	// get images
+	imagesRoot := blueprintConfig.GetValue("blueprint.images").GetObject()
+	imageIDs := imagesRoot.GetKeys()
+
+	var imageRefs []imageRef
+	for _, imageID := range imageIDs {
+		imageRefs = append(imageRefs, imageRef{imageID: imageID, imageURI: imagesRoot.GetKey(imageID).String()})
+	}
+
+	// get streamlets
+	streamletsRoot := blueprintConfig.GetValue("blueprint.streamlets").GetObject()
+	streamletIDs := streamletsRoot.GetKeys()
+
+	var streamletRefs []streamletRef
+	for _, streamletID := range streamletIDs {
+		streamlet := streamletsRoot.GetKey(streamletID).String()
+		streamletSplit := strings.Split(streamlet, "/")
+		streamletRefs = append(streamletRefs, streamletRef{imageID: streamletSplit[0], streamletID: streamletID, className: streamletSplit[1]})
+	}
+
+	// get connections
+	connectionsRoot := blueprintConfig.GetValue("blueprint.connections").GetObject()
+	aStreamletIDs := connectionsRoot.GetKeys()
+	connectionMap := make(map[streamletEndpoint][]streamletEndpoint)
+	for _, aStreamletID := range aStreamletIDs {
+		aStreamletConnections := connectionsRoot.GetKey(aStreamletID).GetObject().Items()
+		for aPort, bStreamletConnections := range aStreamletConnections {
+			var bStreamletEndpoints []streamletEndpoint
+			for _, bStreamletConnection := range bStreamletConnections.GetArray() {
+				bStreamletConnectionSplit := strings.Split(bStreamletConnection.String(), ".")
+				bStreamletEndpoints = append(bStreamletEndpoints,
+					streamletEndpoint{streamletID: bStreamletConnectionSplit[0], port: bStreamletConnectionSplit[1]})
+			}
+			connectionMap[streamletEndpoint{streamletID: aStreamletID, port: aPort}] = bStreamletEndpoints
+		}
+	}
+
+	return blueprint{name: name, images: imageRefs, streamlets: streamletRefs, connections: connectionMap}
+}
+
+// getStreamletIDsFromClassName fetches the streamlet refs from blueprint
+// note there can be multiple refs for a single class e.g.
+// streamlets {
+//	cdr-generator1 = ings/carly.aggregator.CallRecordGeneratorIngress
+//	cdr-generator2 = ings/carly.aggregator.CallRecordGeneratorIngress
+//  ...
+// }
+func (b blueprint) getStreamletIDsFromClassName(className string) []string {
+	var streamletIDs []string
+	for _, streamletRef := range b.streamlets {
+		if streamletRef.className == className {
+			streamletIDs = append(streamletIDs, streamletRef.streamletID)
+		}
+	}
+	return streamletIDs
+}
+
+func (b blueprint) getImageFromStreamletID(streamletID string) (string, error) {
+	var imageID string
+	for _, streamletRef := range b.streamlets {
+		if streamletRef.streamletID == streamletID {
+			imageID = streamletRef.imageID
+			break
+		}
+	}
+	for _, image := range b.images {
+		if image.imageID == imageID {
+			return image.imageURI, nil
+		}
+	}
+	return "", fmt.Errorf("Image not found for streamlet %s", streamletID)
+}
+
+func getAllPortMappings(appID string, streamletName string, descriptor domain.Descriptor,
+	blueprint blueprint) map[string]domain.PortMapping {
+	allPortMappings := make(map[string]domain.PortMapping)
+
+	for k, v := range getOutletPortMappings(appID, streamletName, descriptor) {
+		allPortMappings[k] = v
+	}
+	for k, v := range getInletPortMappings(appID, streamletName, blueprint) {
+		allPortMappings[k] = v
+	}
+	return allPortMappings
+}
+
+func getOutletPortMappings(appID string, streamletName string, descriptor domain.Descriptor) map[string]domain.PortMapping {
+	portMappings := make(map[string]domain.PortMapping)
+	for _, outlet := range descriptor.Outlets {
+		portMappings[outlet.Name] = domain.PortMapping{AppID: appID, Streamlet: streamletName, Outlet: outlet.Name}
+	}
+	return portMappings
+}
+
+func getInletPortMappings(appID string, streamletName string, blueprint blueprint) map[string]domain.PortMapping {
+	portMappings := make(map[string]domain.PortMapping)
+	for outEndpoint, inEndpoints := range blueprint.connections {
+		for _, inEndpoint := range inEndpoints {
+			if inEndpoint.streamletID == streamletName {
+				portMappings[inEndpoint.port] = domain.PortMapping{AppID: appID, Outlet: outEndpoint.port, Streamlet: outEndpoint.streamletID}
+			}
+		}
+	}
+	return portMappings
 }
 
 func splitOnFirstCharacter(str string, char byte) ([]string, error) {
@@ -370,3 +712,67 @@ func prefixWithStreamletName(streamletName string, key string) string {
 func formatStreamletConfigKeyFq(streamletName string, key string) string {
 	return fmt.Sprintf("cloudflow.streamlets.%s", prefixWithStreamletName(streamletName, key))
 }
+
+/*
+{
+  blueprint : {
+    name : taxi-ride-fare
+    images : {
+      proc : docker.io/lightbend/processor:1.0
+      ings : docker.io/lightbend/ingestor:1.0
+      logr : docker.io/lightbend/logger:1.0
+    }
+    streamlets : {
+      taxi-ride : ings/taxiride.ingestor.TaxiRideIngress
+      taxi-fare : ings/taxiride.ingestor.TaxiFareIngress
+      processor : proc/taxiride.processor.TaxiRideProcessor
+      logger : logr/taxiride.logger.FarePerRideLogger
+    }
+    connections : {
+      taxi-ride : {
+        out : [processor.in-taxiride]
+      }
+      taxi-fare : {
+        out : [processor.in-taxifare]
+      }
+      processor : {
+        out : [logger.in]
+      }
+    }
+  }
+}
+*/
+
+// ImageReference is a destructured version of the image path
+type ImageReference struct {
+	Registry   string
+	Repository string
+	Image      string
+	Tag        string
+	FullURI    string
+}
+
+type blueprint struct {
+	name        string
+	images      []imageRef
+	streamlets  []streamletRef
+	connections connections
+}
+
+type imageRef struct {
+	imageID  string
+	imageURI string
+}
+
+type streamletRef struct {
+	imageID     string
+	streamletID string
+	className   string
+}
+
+type streamletEndpoint struct {
+	streamletID string
+	port        string
+}
+
+type connections map[streamletEndpoint][]streamletEndpoint

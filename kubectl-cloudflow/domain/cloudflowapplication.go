@@ -1,8 +1,8 @@
 package domain
 
 import (
-	"encoding/json"
 	"fmt"
+	"encoding/json"
 
 	v1 "k8s.io/api/core/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,7 +34,7 @@ type Endpoint struct {
 // Deployment contains a streamlet deployment
 type Deployment struct {
 	ClassName     string                  `json:"class_name"`
-	Config        json.RawMessage         `json:"config"`
+	Config        json.RawMessage         `json:"config,omitempty"`
 	Image         string                  `json:"image"`
 	Name          string                  `json:"name"`
 	PortMappings  map[string]PortMapping  `json:"port_mappings"`
@@ -102,6 +102,12 @@ type Descriptor struct {
 	Description      string                      `json:"description"`
 }
 
+// Descriptors label value with streamlet descriptors
+type Descriptors struct {
+	StreamletDescriptors []Descriptor `json:"streamlet-descriptors"`
+	APIVersion           string       `json:"api-version"`
+}
+
 // Streamlet TBD
 type Streamlet struct {
 	Descriptor Descriptor `json:"descriptor"`
@@ -123,6 +129,12 @@ type CloudflowApplicationSpec struct {
 	Version        string            `json:"version,omitempty"`
 	LibraryVersion string            `json:"library_version,omitempty"`
 }
+
+// Version of the application descriptor format
+const Version = "1"
+
+// LibraryVersion specifies cloudflow release version
+const LibraryVersion = "1.3.1-SNAPSHOT"
 
 // PodStatus contains the status of the pod
 type PodStatus struct {
@@ -171,6 +183,12 @@ type CloudflowApplicationList struct {
 type CloudflowApplicationDescriptorDigestPair struct {
 	AppDescriptor string `json:"appDescriptor"`
 	ImageDigest   string `json:"imageDigest"`
+}
+
+// CloudflowStreamletDescriptorsDigestPair is a pair of streamlet descriptors and image digest
+type CloudflowStreamletDescriptorsDigestPair struct {
+	StreamletDescriptors []Descriptor `json:"streamletDescriptors"`
+	ImageDigest          string       `json:"imageDigest"`
 }
 
 // GroupName for our CR

@@ -82,6 +82,10 @@ type EmptyImages struct {
 	BlueprintProblem
 }
 
+type EmptyConnections struct {
+	BlueprintProblem
+}
+
 type EmptyStreamletDescriptors struct {
 	BlueprintProblem
 }
@@ -248,6 +252,10 @@ func (b EmptyImages) ToMessage() string {
 	return fmt.Sprintf("The images section is empty.")
 }
 
+func (b EmptyConnections) ToMessage() string {
+	return fmt.Sprintf("The connections section is empty.")
+}
+
 func (b DuplicateConfigParameterKeyFound) ToMessage() string {
 	return fmt.Sprintf("`%s` contains a duplicate configuration parameter key, `%s` is used in more than one `ConfigParameter`", b.className, b.keyName)
 }
@@ -393,6 +401,11 @@ func (b Blueprint) verify() Blueprint {
 		emptyStreamletsProblem = &EmptyStreamlets{}
 	}
 
+	var emptyConnectionsProblem *EmptyConnections
+	if len(b.connections) == 0 {
+		emptyConnectionsProblem = &EmptyConnections{}
+	}
+
 	var imageInStreamletNotInImagesErrors []BlueprintProblem 
 	imageInStreamletNotInImagesErrors = append(imageInStreamletNotInImagesErrors, checkStreamletImageConsistency(b) ...)
 
@@ -425,9 +438,12 @@ func (b Blueprint) verify() Blueprint {
 
 	var newConnections []StreamletConnection
 	var verifiedConnections []VerifiedStreamletConnection
+	var connectionVerifyProblems []BlueprintProblem
 
 	for _, con := range b.connections {
-		newConnections = append(newConnections, con.verify(verifiedStreamlets))
+		newConnection := con.verify(verifiedStreamlets)
+		connectionVerifyProblems = append(connectionVerifyProblems, newConnection.problems...)
+		newConnections = append(newConnections, newConnection)
 	}
 
 	for _, verCon := range newConnections {
@@ -482,6 +498,10 @@ func (b Blueprint) verify() Blueprint {
 		globalProblems = append(globalProblems, *emptyImagesProblem)
 	}
 
+	if emptyConnectionsProblem != nil {
+		globalProblems = append(globalProblems, *emptyConnectionsProblem)
+	}
+
 	if emptyStreamletDescriptorsProblem != nil {
 		globalProblems = append(globalProblems, *emptyStreamletDescriptorsProblem)
 	}
@@ -501,6 +521,10 @@ func (b Blueprint) verify() Blueprint {
 	var problems = [][]BlueprintProblem{illegalConnectionProblems, unconnectedInletProblems, portNameProblems, configParameterProblems, volumeMountProblems}
 	for i := range problems {
 		globalProblems = append(globalProblems, problems[i]...)
+	}
+
+	if len(connectionVerifyProblems) > 0 {
+		globalProblems = append(globalProblems, connectionVerifyProblems...)
 	}
 
 	return Blueprint{
